@@ -1,0 +1,121 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.env.*
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+pip-delete-this-directory.txt
+
+# Virtual environment folders
+.venv/
+venv/
+env/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+.nbconvert.ipynb
+
+# Logs and reports
+*.log
+logs/
+tensorboard/
+runs/
+events.out.tfevents.*
+wandb/
+mlruns/
+*.csv   # remove if you track small csvs intentionally
+
+# Model artifacts / checkpoints / weights
+checkpoints/
+checkpoints-*/
+saved_models/
+models/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.pb
+*.onnx
+*.tflite
+saved_model/
+*.ckpt.index
+*.ckpt.meta
+
+# Data (datasets, downloads, preprocessing outputs)
+data/
+datasets/
+raw_data/
+processed_data/
+*.npy
+*.npz
+*.pickle
+*.pkl
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.whl
+
+# Testing / caching
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.cache/
+.ropeproject/
+
+# Documentation
+docs/_build/
+
+# Secrets / credentials
+*.key
+*.pem
+*.crt
+credentials.json
+secrets.json
+.env.local
+.env.*.local
+
+# Misc
+*.sqlite3
+*.db
+
+# Node (if present)
+node_modules/
+
+# Ignore anything large by pattern (optional — tweak as needed)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
