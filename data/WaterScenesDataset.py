@@ -62,15 +62,16 @@ class WaterScenesDataset(Dataset):
         # --- 1. Load Image ---
         img_path = os.path.join(self.image_dir, f"{file_id}.jpg")
         image = Image.open(img_path).convert('RGB')
+        original_image_size = image.size # (width, height)
 
         # --- 2. Load 4D Radar Data ---
         radar_path = os.path.join(self.radar_dir, f"{file_id}.csv")
         try:
             radar_df = pd.read_csv(radar_path)
-            radar_points = radar_df[['x', 'y', 'z', 'doppler', 'power']].values
+            radar_points = radar_df[['u', 'v', 'range', 'elevation', 'doppler', 'power']].values
         except Exception as e:
             # print(f"Error loading radar file {radar_path}: {e}")
-            radar_points = np.empty((0, 5), dtype=np.float32)
+            radar_points = np.empty((0, 6), dtype=np.float32)
             
         radar_tensor = torch.tensor(radar_points, dtype=torch.float32)
 
@@ -100,7 +101,7 @@ class WaterScenesDataset(Dataset):
         if self.image_transform:
             image = self.image_transform(image)
         if self.radar_transform:
-            radar_tensor = self.radar_transform(radar_tensor)
+            radar_tensor = self.radar_transform(radar_tensor, original_image_size)
         if self.target_transform:
             # Note: target_transform now operates on a [N_objects, 5] tensor
             label_tensor = self.target_transform(label_tensor)
@@ -122,8 +123,8 @@ def collate_fn(batch):
     images = torch.stack([item['image'] for item in batch])
     
     # Radar data is a list of tensors (one for each item in the batch)
-    radar_data = [item['radar'] for item in batch]
-    
+    radar_data = torch.stack([item['radar'] for item in batch])   
+     
     # Process labels (YOLO format)
     labels = []
     for i, item in enumerate(batch):
