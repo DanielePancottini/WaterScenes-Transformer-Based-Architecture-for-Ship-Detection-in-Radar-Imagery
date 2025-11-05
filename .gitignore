@@ -55,7 +55,7 @@ saved_model/
 *.ckpt.meta
 
 # Data (datasets, downloads, preprocessing outputs)
-data/
+data/WaterScenes/
 datasets/
 raw_data/
 processed_data/

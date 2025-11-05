@@ -1,8 +1,8 @@
 import os
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from WaterScenesDataset import WaterScenesDataset
-from WaterScenesDataset import collate_fn
+from data.WaterScenesDataset import WaterScenesDataset
+from data.WaterScenesDataset import collate_fn
 
 # --- Set your paths ---
 DATASET_ROOT = "./data/WaterScenes"
