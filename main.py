@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from data.WaterScenesDataset import WaterScenesDataset
 from data.WaterScenesDataset import collate_fn
-from models.transforms import REVP_Transform
+from ws_detr.revp import REVP_Transform
 
 # --- Set your paths ---
 DATASET_ROOT = "./data/WaterScenes"
