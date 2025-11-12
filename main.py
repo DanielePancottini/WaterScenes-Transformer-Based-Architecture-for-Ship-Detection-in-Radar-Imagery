@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from backbone.radar.rc_net import RadarConv
+from backbone.radar.rc_net import RCNet
 from data.WaterScenesDataset import WaterScenesDataset
 from data.WaterScenesDataset import collate_fn
 from preprocess.revp import REVP_Transform
@@ -58,11 +58,7 @@ stride = 1
 height = 680
 width = 680
 
-radar_conv_block = RadarConv(
-    in_channels=in_channels, 
-    out_channels=out_channels,
-    stride=stride
-)
+model = RCNet(in_channels)
 
 # (Set up val_loader similarly)
 
@@ -137,13 +133,12 @@ if __name__ == "__main__":
         plt.show()
 
         # Pass the input through the block
-        fdar = radar_conv_block(radars_batch)
-
-        # Check the output shape
-        # It should be (B, C_out, H, W)
-        print(f"Input shape (fr):  {radars_batch.shape}")
-        print(f"Output shape (fdar): {fdar.shape}")
+        output = model(radars_batch)
+        print(len(output))
+        print(output[0].shape)
+        print(output[1].shape)
+        print(output[2].shape)
                 
-        if batch_idx == 10:  # Plot first 2 batches
+        if batch_idx == 2:  # Plot first 2 batches
             print("--- Test complete ---")
             break
