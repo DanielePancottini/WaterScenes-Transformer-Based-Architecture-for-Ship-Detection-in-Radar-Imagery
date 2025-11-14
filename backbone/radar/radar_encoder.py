@@ -1,6 +1,8 @@
+import math
 import torch
 import torch.nn as nn
-from backbone.radar.def_conv import DeformableConv2d
+
+from backbone.radar.deformable_conv import DeformableConv2d
 
 image_encoder_width = {
     'L': [40, 80, 192, 384],  # 26m 83.3% 6attn
@@ -108,3 +110,78 @@ class RCNet(nn.Module):
     def forward(self, x):
         x = self.forward_stages(x)
         return x
+    
+class RCNetWithTransformer(nn.Module):
+    def __init__(self, in_channels, phi='S0', num_transformer_layers=2, num_heads=4, max_input_hw=680):
+        super(RCNetWithTransformer, self).__init__()
+
+        #initialize RCNet
+        self.rcnet = RCNet(in_channels, phi)
+
+        #get the output channels from RCNet
+        width = image_encoder_width[phi]
+        self.channels = [
+            width[1] // 4,  # C3 (stride 8)
+            width[2] // 4,  # C4 (stride 16)
+            width[3] // 4,  # C5 (stride 32)
+        ]
+
+        #Positional embeddings for transformer
+        self.positional_embedding = nn.ParameterList()
+        strides = [8, 16, 32]
+
+        #Transformer encoder blocks
+        self.transformer_blocks = nn.ModuleList()
+
+        # Create positional embeddings and transformer blocks for each scale
+        for i, d_model in enumerate(self.channels):
+            pe = nn.Parameter(torch.randn(1, d_model, math.ceil(max_input_hw / strides[i]), math.ceil(max_input_hw / strides[i])))
+            self.positional_embedding.append(pe)
+
+            transformer_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=num_heads,
+                dim_feedforward=self.channels[i] * 4,
+                dropout=0.1,
+                activation='relu',
+                batch_first=True,
+                norm_first=True
+            )
+
+            transformer_encoder = nn.TransformerEncoder(
+                transformer_layer,
+                num_layers=num_transformer_layers
+            )
+
+            self.transformer_blocks.append(transformer_encoder)
+
+    def forward(self, x):
+
+        # Pass input through RCNet to get multi-scale features
+        features = self.rcnet(x)
+
+        # Process each scale with its corresponding transformer block
+        transformed_features = []
+
+        for i, feature in enumerate(features):
+            B, C, H, W = feature.shape
+
+            # Add positional embedding
+            pe_cropped = self.positional_embedding[i][:, :, :H, :W]
+            feature = feature + pe_cropped
+
+            # Reshape for transformer: (B, C, H, W) -> (B, H*W, C)
+            feature_reshaped = feature.permute(0, 2, 3, 1).reshape(B, H * W, C)
+
+            # Pass through transformer block
+            transformed_feature = self.transformer_blocks[i](feature_reshaped)
+
+            # Reshape back to (B, C, H, W)
+            transformed_feature = transformed_feature.reshape(B, H, W, C).permute(0, 3, 1, 2)
+
+            # Add residual connection
+            transformed_feature = transformed_feature + feature
+
+            transformed_features.append(transformed_feature)
+
+        return transformed_features

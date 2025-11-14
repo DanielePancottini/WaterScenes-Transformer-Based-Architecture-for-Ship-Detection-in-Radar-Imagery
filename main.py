@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from backbone.radar.rc_net import RCNet
+from backbone.radar.radar_encoder import RCNet, RCNetWithTransformer
 from data.WaterScenesDataset import WaterScenesDataset
 from data.WaterScenesDataset import collate_fn
 from preprocess.revp import REVP_Transform
@@ -58,7 +58,16 @@ stride = 1
 height = 680
 width = 680
 
-model = RCNet(in_channels)
+rcnet = RCNet(in_channels)
+
+rcnet_tf = RCNetWithTransformer(
+    in_channels=in_channels, 
+    phi='S0',
+    num_transformer_layers=2,
+    num_heads=4,
+    max_input_hw=680 # Set max_input_hw to 256 for this example
+)
+
 
 # (Set up val_loader similarly)
 
@@ -132,13 +141,24 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.show()
 
-        # Pass the input through the block
-        output = model(radars_batch)
-        print(len(output))
-        print(output[0].shape)
-        print(output[1].shape)
-        print(output[2].shape)
+        print("--- Testing original RCNet ---")
+        features_original = rcnet(radars_batch)
+        print("Original RCNet output shapes:")
+        for f in features_original:
+            print(f.shape)
+        
+        print("\n--- Testing RCNetWithTransformer ---")
+        features_transformed = rcnet_tf(radars_batch)
+        print("Transformed RCNet output shapes:")
+        for f in features_transformed:
+            print(f.shape)
+
+        # 5. Verify shapes are the same
+        for f_orig, f_tf in zip(features_original, features_transformed):
+            assert f_orig.shape == f_tf.shape
+        
+        print("\nSuccess! Output feature maps have the same shape.")
                 
-        if batch_idx == 2:  # Plot first 2 batches
+        if batch_idx == 0:  # Plot first 2 batches
             print("--- Test complete ---")
             break
