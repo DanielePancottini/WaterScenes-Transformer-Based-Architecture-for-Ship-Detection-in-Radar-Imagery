@@ -2,6 +2,7 @@ import math
 import os
 from matplotlib import pyplot as plt
 import numpy as np
+import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from backbone.radar.radar_encoder import RCNet, RCNetWithTransformer
@@ -10,6 +11,9 @@ from data.WaterScenesDataset import collate_fn
 from detection.detection_head import NanoDetectionHead
 from model import RadarDetectionModel
 from preprocess.revp import REVP_Transform
+from train import Trainer
+import torch.optim as optim
+from yolox.models.losses import YOLOXLoss
 
 # --- Set your paths ---
 DATASET_ROOT = "./data/WaterScenes"
@@ -17,9 +21,21 @@ TRAIN_FILE = os.path.join(DATASET_ROOT, "train.txt")
 VAL_FILE = os.path.join(DATASET_ROOT, "val.txt")
 TEST_FILE = os.path.join(DATASET_ROOT, "test.txt")
 
-# --- Define transforms ---
-# This is your final model input size
+# --- 1. Config ---
 TARGET_SIZE = (320, 320) 
+NUM_CLASSES = 8 # Change this
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EPOCHS = 5
+BATCH_SIZE = 32
+STRIDES = [8, 16, 32] # Must match your model's FPN/Head strides
+in_channels = 4
+out_channels = 8
+stride = 1
+height = 320
+width = 320
+in_channels_list = [12, 24, 44]
+num_classes = 8
+head_width = 32
 
 # --- Image Transforms ---
 # (Unchanged from before)
@@ -43,9 +59,15 @@ train_dataset = WaterScenesDataset(
     # You can add transforms for radar or labels here
 )
 
-# --- 2. Create the DataLoaders ---
-BATCH_SIZE = 4
+validation_dataset = WaterScenesDataset(
+    root_dir=DATASET_ROOT,
+    split_file=VAL_FILE,
+    image_transform=image_transform,
+    radar_transform=radar_transform,
+    # You can add transforms for radar or labels here
+)
 
+# --- 2. Create the DataLoaders ---
 train_loader = DataLoader(
     train_dataset,
     batch_size=BATCH_SIZE,
@@ -54,15 +76,19 @@ train_loader = DataLoader(
     collate_fn=collate_fn
 )
 
-# Parameters
-in_channels = 4
-out_channels = 8
-stride = 1
-height = 320
-width = 320
+val_loader = DataLoader(
+    validation_dataset,
+    batch_size=BATCH_SIZE,
+    shuffle=False,
+    num_workers=4,
+    collate_fn=collate_fn
+)
 
+# --- 3. Initialize the Model ---
+# Initialize RCNet Backbone
 rcnet = RCNet(in_channels)
 
+# Initialize RCNet with Transformer Backbone
 rcnet_tf = RCNetWithTransformer(
     in_channels=in_channels, 
     phi='S0',
@@ -70,10 +96,6 @@ rcnet_tf = RCNetWithTransformer(
     num_heads=4,
     max_input_hw=320 # Set max_input_hw to 256 for this example
 )
-
-in_channels_list = [12, 24, 44]
-num_classes = 5
-head_width = 32
 
  # --- Initialize Head ---
 head = NanoDetectionHead(
@@ -84,6 +106,28 @@ head = NanoDetectionHead(
 
 # --- Initialize Model ---
 model = RadarDetectionModel(backbone=rcnet_tf, detection_head=head)
+
+# --- 4. The Criterion (from the library) ---
+# This is it! This module contains all the SimOTA logic.
+# It's an nn.Module that you pass to your trainer.
+criterion = YOLOXLoss(
+    num_classes=NUM_CLASSES,
+    strides=STRIDES
+).to(DEVICE)
+
+# --- 5. Optimizer ---
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# --- 6. Your Trainer (No changes needed) ---
+trainer = Trainer(
+    model=model,
+    train_loader=train_loader,
+    val_loader=val_loader,
+    criterion=criterion,
+    optimizer=optimizer,
+    epochs=EPOCHS,
+    device=DEVICE
+)
 
 # (Set up val_loader similarly)
 
@@ -172,3 +216,7 @@ if __name__ == "__main__":
         if batch_idx == 0:  # Plot first 2 batches
             print("--- Test complete ---")
             break
+    
+    print("Starting training...")
+    trainer.train()
+    print("Training complete.")

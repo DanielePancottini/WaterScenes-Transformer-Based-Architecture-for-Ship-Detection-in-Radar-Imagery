@@ -129,19 +129,10 @@ class NanoDetectionHead(nn.Module):
             reg_out = self.reg_pred(reg_feat)  # [B, 4, H, W]
             obj_out = self.obj_pred(reg_feat)  # [B, 1, H, W]
             
-            # 4. Flatten and concatenate
-            # [B, C, H, W] -> [B, C, H*W] -> [B, H*W, C]
-            B, _, H, W = cls_out.shape
-            
-            cls_out = cls_out.flatten(2).permute(0, 2, 1) # [B, H*W, NumClasses]
-            reg_out = reg_out.flatten(2).permute(0, 2, 1) # [B, H*W, 4]
-            obj_out = obj_out.flatten(2).permute(0, 2, 1) # [B, H*W, 1]
-            
             # Combine all predictions for this level
             # Order: [reg (4), obj (1), cls (NumClasses)]
-            level_predictions = torch.cat([reg_out, obj_out, cls_out], dim=2)
+            level_predictions = torch.cat([reg_out, obj_out, cls_out], dim=1) # [B, H*W, 5 + NumClasses]
             all_predictions.append(level_predictions)
             
-        # Concatenate predictions from all levels
-        # [B, (N_P3 + N_P4 + N_P5), 5 + NumClasses]
-        return torch.cat(all_predictions, dim=1)
+        # Return the list of predictions for all levels
+        return all_predictions
