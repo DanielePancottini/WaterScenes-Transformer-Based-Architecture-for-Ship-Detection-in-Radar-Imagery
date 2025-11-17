@@ -1,7 +1,12 @@
 import torch
 
+from torch.amp import GradScaler
+from torch.amp import autocast
+from detection.detection_loss import set_optimizer_lr
+
 class Trainer:
-    def __init__(self, model, train_loader, val_loader, criterion, optimizer, epochs, device):
+    def __init__(self, model, train_loader, val_loader, criterion, optimizer, epochs, device,
+                 ema, lr_scheduler, fp16=True):
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -9,32 +14,56 @@ class Trainer:
         self.optimizer = optimizer
         self.epochs = epochs
         self.device = device
+        self.ema = ema
+        self.lr_scheduler = lr_scheduler
+        self.fp16 = fp16
+        self.scaler = GradScaler(enabled=self.fp16) # for mixed precision
+        self.epoch = 0
+        self.steps_per_epoch = len(train_loader)
 
     def train_epoch(self):
         self.model.train()
         running_loss = 0.0
-        for batch in self.train_loader:
-            radars, targets = batch['radar'].to(self.device), batch['labels'].to(self.device)
+        for i, batch in enumerate(self.train_loader):
+            # set new lr for current step
+            current_step = self.epoch * self.steps_per_epoch + i
+            set_optimizer_lr(self.optimizer, self.lr_scheduler, current_step)
+
+            radars, targets = batch['radar'].to(self.device), batch['label'].to(self.device)
 
             self.optimizer.zero_grad()
-            outputs = self.model(radars)
-            loss = self.criterion(outputs, targets)
-            loss.backward()
-            self.optimizer.step()
+
+            # Mixed precision training
+            with autocast(enabled=self.fp16, device_type=self.device.type):
+                outputs = self.model(radars)
+                loss = self.criterion(outputs, targets)
+                
+            # Mixed precision backward
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            # Update EMA model
+            if self.ema is not None:
+                self.ema.update(self.model)
 
             running_loss += loss.item()
         epoch_loss = running_loss / len(self.train_loader)
         return epoch_loss
 
     def validate_epoch(self):
-        self.model.eval()
+        # Use EMA model for validation if available
+        model_to_evaluate = self.ema.ema_model.eval() if self.ema is not None else self.model.eval()
+        
         running_loss = 0.0
         with torch.no_grad():
             for batch in self.val_loader:
-                radars, targets = batch['radar'].to(self.device), batch['labels'].to(self.device)
+                radars, targets = batch['radar'].to(self.device), batch['label'].to(self.device)
 
-                outputs = self.model(radars)
-                loss = self.criterion(outputs, targets)
+                # Mixed precision inference
+                with autocast(enabled=self.fp16, device_type=self.device.type):
+                    outputs = model_to_evaluate(radars)
+                    loss = self.criterion(outputs, targets)
 
                 running_loss += loss.item()
         epoch_loss = running_loss / len(self.val_loader)

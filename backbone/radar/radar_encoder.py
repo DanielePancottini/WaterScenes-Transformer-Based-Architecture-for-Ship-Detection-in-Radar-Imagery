@@ -54,7 +54,7 @@ class RCBlock(nn.Module):
         x = self.weight_conv1(x)
         x = self.bn(x)
         x = self.activation(x)
-        x += x_residual
+        x = x_residual + x
         x = self.weight_conv2(x)
         return x
 
@@ -144,8 +144,7 @@ class RCNetWithTransformer(nn.Module):
                 dim_feedforward=self.channels[i] * 4,
                 dropout=0.1,
                 activation='relu',
-                batch_first=True,
-                norm_first=True
+                batch_first=True
             )
 
             transformer_encoder = nn.TransformerEncoder(

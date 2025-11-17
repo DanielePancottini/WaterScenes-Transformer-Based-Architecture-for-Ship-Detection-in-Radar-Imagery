@@ -3,6 +3,7 @@ import os
 from matplotlib import pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from backbone.radar.radar_encoder import RCNet, RCNetWithTransformer
@@ -13,7 +14,7 @@ from model import RadarDetectionModel
 from preprocess.revp import REVP_Transform
 from train import Trainer
 import torch.optim as optim
-from yolox.models.losses import YOLOXLoss
+from detection.detection_loss import YOLOLoss, ModelEMA, get_lr_scheduler
 
 # --- Set your paths ---
 DATASET_ROOT = "./data/WaterScenes"
@@ -36,6 +37,10 @@ width = 320
 in_channels_list = [12, 24, 44]
 num_classes = 8
 head_width = 32
+
+INITIAL_LR = 0.03
+MOMENTUM = 0.937
+FP16 = True
 
 # --- Image Transforms ---
 # (Unchanged from before)
@@ -107,16 +112,32 @@ head = NanoDetectionHead(
 # --- Initialize Model ---
 model = RadarDetectionModel(backbone=rcnet_tf, detection_head=head)
 
-# --- 4. The Criterion (from the library) ---
-# This is it! This module contains all the SimOTA logic.
-# It's an nn.Module that you pass to your trainer.
-criterion = YOLOXLoss(
+if torch.cuda.device_count() > 1:
+    print(f"Using {torch.cuda.device_count()} GPUs for DataParallel.")
+    model = nn.DataParallel(model)
+
+model.to(DEVICE)
+    
+ema = ModelEMA(model)
+
+criterion = YOLOLoss(
     num_classes=NUM_CLASSES,
-    strides=STRIDES
+    strides=STRIDES,
+    fp16=FP16 
 ).to(DEVICE)
 
 # --- 5. Optimizer ---
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.SGD(model.parameters(), lr=INITIAL_LR, momentum=MOMENTUM)
+
+# --- Learning Rate Scheduler ---
+steps_per_epoch = len(train_loader)
+total_steps = EPOCHS * steps_per_epoch
+lr_scheduler = get_lr_scheduler(
+    lr_decay_type="cos",
+    lr=INITIAL_LR,
+    min_lr=INITIAL_LR * 0.01,
+    total_iters=total_steps,
+)
 
 # --- 6. Your Trainer (No changes needed) ---
 trainer = Trainer(
@@ -126,7 +147,10 @@ trainer = Trainer(
     criterion=criterion,
     optimizer=optimizer,
     epochs=EPOCHS,
-    device=DEVICE
+    device=DEVICE,
+    ema=ema,
+    lr_scheduler=lr_scheduler,
+    fp16=FP16
 )
 
 # (Set up val_loader similarly)
@@ -202,16 +226,38 @@ if __name__ == "__main__":
         plt.show()
 
         print("\n--- Testing RCNetWithTransformer ---")
+        radars_batch = radars_batch.to(DEVICE)
+        model.eval()
+
         predictions = model(radars_batch)
 
-        print("\n--- Testing Detection Head ---")
+        flattened_predictions = []
+        for tensor in predictions:
+            # 1. Get shape: [B, C, H, W]
+            B, C, H, W = tensor.shape
+            
+            # 2. Permute to [B, H, W, C]
+            tensor = tensor.permute(0, 2, 3, 1)
+            
+            # 3. Flatten to [B, H*W, C]
+            tensor = tensor.reshape(B, -1, C)
+            
+            flattened_predictions.append(tensor)
+
+        # Concatenate all grids into one big tensor
+        # [B, 1600, 13], [B, 400, 13], [B, 100, 13] -> [B, 2100, 13]
+        final_predictions = torch.cat(flattened_predictions, dim=1)
+        
+        # --- End Fix ---
+
+        # Now, calculate the expected total grids
         s8_grids = math.ceil(320 / 8) ** 2
         s16_grids = math.ceil(320 / 16) ** 2
         s32_grids = math.ceil(320 / 32) ** 2
         total_grid_cells = s8_grids + s16_grids + s32_grids
 
-        print(f"Detections shape: {predictions.shape}, Total Grid: {total_grid_cells}, 5 + NumClasses: {5 + num_classes}")  # Should be [B, TotalGridCells, 5 + NumClasses]
-        
+        # THIS LINE WILL NOW WORK
+        print(f"Detections shape: {final_predictions.shape}, Total Grid: {total_grid_cells}, 5 + NumClasses: {5 + num_classes}")
 
         if batch_idx == 0:  # Plot first 2 batches
             print("--- Test complete ---")
