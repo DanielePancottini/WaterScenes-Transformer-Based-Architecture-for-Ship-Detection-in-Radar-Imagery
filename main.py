@@ -20,22 +20,18 @@ DATASET_ROOT = "./data/WaterScenes"
 TRAIN_FILE = os.path.join(DATASET_ROOT, "train.txt")
 VAL_FILE = os.path.join(DATASET_ROOT, "val.txt")
 TEST_FILE = os.path.join(DATASET_ROOT, "test.txt")
+MODEL_SAVE_PATH = "./checkpoints/rcnet_radar_detection.pth"
 
-# --- 1. Config ---
+# --- Config ---
 TARGET_SIZE = (320, 320) 
-NUM_CLASSES = 8 # Change this
+NUM_CLASSES = 8 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPOCHS = 5
 BATCH_SIZE = 8
-STRIDES = [8, 16, 32] # Must match your model's FPN/Head strides
-in_channels = 4
-out_channels = 8
-stride = 1
-height = 320
-width = 320
-in_channels_list = [12, 24, 44]
-num_classes = 8
-head_width = 32
+STRIDES = [8, 16, 32] 
+IN_CHANNELS = 4
+IN_CHANNELS_LIST = [12, 24, 44]
+HEAD_WIDTH = 32
 
 INITIAL_LR = 0.03
 MOMENTUM = 0.937
@@ -43,7 +39,6 @@ FP16 = True
 
 # --- 1. Add CuDNN Benchmark ---
 torch.backends.cudnn.benchmark = True
-
 
 #I want to test my dataloader
 if __name__ == "__main__":
@@ -102,11 +97,11 @@ if __name__ == "__main__":
 
     # --- 3. Initialize the Model ---
     # Initialize RCNet Backbone
-    rcnet = RCNet(in_channels)
+    rcnet = RCNet(IN_CHANNELS)
 
     # Initialize RCNet with Transformer Backbone
     rcnet_tf = RCNetWithTransformer(
-        in_channels=in_channels, 
+        in_channels=IN_CHANNELS, 
         phi='S0',
         num_transformer_layers=2,
         num_heads=4,
@@ -115,9 +110,9 @@ if __name__ == "__main__":
 
     # --- Initialize Head ---
     head = NanoDetectionHead(
-        num_classes=num_classes,
-        in_channels_list=in_channels_list,
-        head_width=head_width
+        num_classes=NUM_CLASSES,
+        in_channels_list=IN_CHANNELS_LIST,
+        head_width=HEAD_WIDTH
     )
 
     # --- Initialize Model ---
@@ -265,12 +260,12 @@ if __name__ == "__main__":
         total_grid_cells = s8_grids + s16_grids + s32_grids
 
         # THIS LINE WILL NOW WORK
-        print(f"Detections shape: {final_predictions.shape}, Total Grid: {total_grid_cells}, 5 + NumClasses: {5 + num_classes}")
+        print(f"Detections shape: {final_predictions.shape}, Total Grid: {total_grid_cells}, 5 + NumClasses: {5 + NUM_CLASSES}")
 
         if batch_idx == 0:  # Plot first 2 batches
             print("--- Test complete ---")
             break
     
     print("Starting training...")
-    trainer.train()
+    trainer.train(final_model_path=MODEL_SAVE_PATH)
     print("Training complete.")

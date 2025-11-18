@@ -1,3 +1,4 @@
+import os
 import torch
 from torch.amp import GradScaler
 from torch.amp import autocast
@@ -73,9 +74,14 @@ class Trainer:
         epoch_loss = running_loss / len(self.val_loader)
         return epoch_loss
 
-    def train(self):
+    def train(self, final_model_path):
         for epoch in range(self.epochs):
             train_loss = self.train_epoch()
             val_loss = self.validate_epoch()
             print(f"Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        
+        # Save the final model
+        if os.path.dirname(final_model_path) != '':
+            os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
+        torch.save(self.model.state_dict(), final_model_path)
 
