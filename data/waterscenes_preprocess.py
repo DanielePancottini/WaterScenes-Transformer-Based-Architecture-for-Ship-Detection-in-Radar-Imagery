@@ -11,7 +11,7 @@ from pathlib import Path
 from preprocess.revp import REVP_Transform
 
 # --- Configuration ---
-DATASET_ROOT = "./data/WaterScenes" # Your main dataset folder
+DATASET_ROOT = os.path.abspath("./data/WaterScenes") # Your main dataset folder
 TARGET_SIZE = (320, 320)           # Must match your training config
 
 # Define input directories

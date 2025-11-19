@@ -2,4 +2,3 @@ torch
 matplotlib
 numpy
 pandas
-pixeltable-yolox

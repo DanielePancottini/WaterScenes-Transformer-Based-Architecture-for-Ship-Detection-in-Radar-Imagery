@@ -16,11 +16,11 @@ import torch.optim as optim
 from detection.detection_loss import YOLOLoss, ModelEMA, get_lr_scheduler
 
 # --- Set your paths ---
-DATASET_ROOT = "./data/WaterScenes"
+DATASET_ROOT = os.path.abspath("./data/WaterScenes")
 TRAIN_FILE = os.path.join(DATASET_ROOT, "train.txt")
 VAL_FILE = os.path.join(DATASET_ROOT, "val.txt")
 TEST_FILE = os.path.join(DATASET_ROOT, "test.txt")
-MODEL_SAVE_PATH = "./checkpoints/rcnet_radar_detection.pth"
+MODEL_SAVE_PATH = os.path.abspath("./checkpoints/rcnet_radar_detection.pth")
 
 # --- Config ---
 TARGET_SIZE = (320, 320) 
