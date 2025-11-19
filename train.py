@@ -58,7 +58,7 @@ class Trainer:
 
     def validate_epoch(self):
         # Use EMA model for validation if available
-        model_to_evaluate = self.ema.ema_model.eval() if self.ema is not None else self.model.eval()
+        model_to_evaluate = self.ema.ema.eval() if self.ema is not None else self.model.eval()
         
         running_loss = 0.0
         with torch.no_grad():
