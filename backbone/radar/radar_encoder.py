@@ -13,7 +13,7 @@ image_encoder_width = {
 
 
 class RadarConv(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
+    def __init__(self, in_channels, out_channels, stride, use_deform=False):
         super(RadarConv, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -22,22 +22,27 @@ class RadarConv(nn.Module):
         self.avg_pool = nn.AvgPool2d(kernel_size=3, stride=1, padding=1)
 
         #Deformable convolution layer
-        self.deform_conv = DeformableConv2d(
-            out_channels, out_channels, kernel_size=3, stride=stride, padding= 3 // 2
-        )
+        if(use_deform):
+            self.conv = DeformableConv2d(
+                out_channels, out_channels, kernel_size=3, stride=stride, padding= 3 // 2
+            )
+        else:
+            self.conv = nn.Conv2d(
+                out_channels, out_channels, kernel_size=3, stride=stride, padding= 3 // 2
+            )
 
     def forward(self, x):
         x = self.avg_pool(x)
-        x = self.deform_conv(x)
+        x = self.conv(x)
         return x
 
 class RCBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, downsample=False):
+    def __init__(self, in_channels, out_channels, downsample=False, use_deform=False):
         super(RCBlock, self).__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
 
-        self.radar_conv = RadarConv(in_channels, in_channels, stride=1)
+        self.radar_conv = RadarConv(in_channels, in_channels, stride=1, use_deform=use_deform)
         self.weight_conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
         
         self.bn = nn.BatchNorm2d(in_channels)
@@ -66,12 +71,16 @@ class RCNet(nn.Module):
        
         stage_blocks = []
         for i in range(4):
+
+            use_deform = (i >= 2)
+
             if i == 0:
                 stage_blocks.append(
                     RCBlock(
                         in_channels,
                         image_encoder_width[self.phi][i] // 4,
                         downsample=True,
+                        use_deform=False
                     )
                 )
                 stage_blocks.append(
@@ -79,6 +88,7 @@ class RCNet(nn.Module):
                         image_encoder_width[self.phi][i] // 4,
                         image_encoder_width[self.phi][i] // 4,
                         downsample=True,
+                        use_deform=False
                     )
                 )
             else:
@@ -87,6 +97,7 @@ class RCNet(nn.Module):
                         image_encoder_width[self.phi][i - 1] // 4,
                         image_encoder_width[self.phi][i - 1] // 4,
                         downsample=False,
+                        use_deform=use_deform
                     )
                 )
                 stage_blocks.append(
@@ -94,6 +105,7 @@ class RCNet(nn.Module):
                         image_encoder_width[self.phi][i - 1] // 4,
                         image_encoder_width[self.phi][i] // 4,
                         downsample=True,
+                        use_deform=use_deform
                     )
                 )
         

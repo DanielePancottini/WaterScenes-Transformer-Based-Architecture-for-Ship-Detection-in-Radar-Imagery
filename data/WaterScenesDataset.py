@@ -65,11 +65,14 @@ class WaterScenesDataset(Dataset):
         # Get the file ID for this index
         file_id = self.file_ids[idx]
         
-        # --- 1. Load Image ---
+        # --- 1. Load Image (unecessary for now) ---
+        """
         img_path = os.path.join(self.image_dir, f"{file_id}.jpg")
         image = Image.open(img_path).convert('RGB')
         w, h = image.size 
         original_image_size = (h, w) # Pass (H, W) tuple
+        """
+        image = torch.zeros(1)
 
         # --- 2. Load 4D Radar Data ---
         radar_path = os.path.join(self.radar_revp_dir, f"{file_id}.npy")
@@ -108,7 +111,8 @@ class WaterScenesDataset(Dataset):
 
         # --- 4. Apply Transforms ---
         if self.image_transform:
-            image = self.image_transform(image)
+            #image = self.image_transform(image)
+            None
         if self.target_transform:
             # Note: target_transform now operates on a [N_objects, 5] tensor
             label_tensor = self.target_transform(label_tensor)
@@ -117,7 +121,8 @@ class WaterScenesDataset(Dataset):
         sample = {
             'image': image,
             'radar': radar_tensor,
-            'label': label_tensor # Shape: [N_objects, 5]
+            'label': label_tensor, # Shape: [N_objects, 5]
+            'file_id': file_id
         }
         
         return sample
@@ -131,6 +136,9 @@ def collate_fn(batch):
     
     # Radar data is a list of tensors (one for each item in the batch)
     radar_data = torch.stack([item['radar'] for item in batch])   
+
+    #Collate file ids
+    file_ids = [item['file_id'] for item in batch]
      
     # Process labels (YOLO format)
     labels = []
@@ -156,5 +164,6 @@ def collate_fn(batch):
     return {
         'image': images,
         'radar': radar_data,
-        'label': labels_tensor  # Shape: [Total_Objects_In_Batch, 6]
+        'label': labels_tensor,  # Shape: [Total_Objects_In_Batch, 6]
+        'file_ids': file_ids
     }
