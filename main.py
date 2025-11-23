@@ -23,7 +23,7 @@ MODEL_SAVE_PATH = os.path.abspath("./checkpoints/rcnet_radar_detection.pth")
 
 # --- Config ---
 TARGET_SIZE = (320, 320) 
-NUM_CLASSES = 8 
+NUM_CLASSES = 7 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 EPOCHS = 5
 BATCH_SIZE = 16
@@ -31,9 +31,11 @@ STRIDES = [8, 16, 32]
 IN_CHANNELS = 4
 IN_CHANNELS_LIST = [12, 24, 44]
 HEAD_WIDTH = 32
-INITIAL_LR = 0.03
+INITIAL_LR = 0.001
 MOMENTUM = 0.937
-FP16 = True
+FP16 = False
+RADAR_MEAN = [0.1127, -0.0019, -0.0012, 0.0272]
+RADAR_STD  = [3.1396,  0.2177,  0.0556,  0.6252]
 
 # --- Add CuDNN Benchmark ---
 torch.backends.cudnn.benchmark = True
@@ -56,12 +58,16 @@ if __name__ == "__main__":
         root_dir=DATASET_ROOT,
         split_file=TRAIN_FILE,
         image_transform=image_transform,
+        radar_mean=RADAR_MEAN,
+        radar_std=RADAR_STD
     )
 
     validation_dataset = WaterScenesDataset(
         root_dir=DATASET_ROOT,
         split_file=VAL_FILE,
         image_transform=image_transform,
+        radar_mean=RADAR_MEAN,
+        radar_std=RADAR_STD
     )
 
     # --- Create the DataLoaders ---

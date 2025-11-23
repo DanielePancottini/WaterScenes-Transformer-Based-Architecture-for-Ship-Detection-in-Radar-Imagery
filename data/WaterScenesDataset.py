@@ -12,7 +12,8 @@ class WaterScenesDataset(Dataset):
     Loads hybrid data (Image + 4D Radar) and corresponding 
     YOLO-format detection labels.
     """
-    def __init__(self, root_dir, split_file, image_transform=None, target_transform=None):
+    def __init__(self, root_dir, split_file, image_transform=None, target_transform=None,
+                 radar_mean=None, radar_std=None):
         """
         Args:
             root_dir (str): Path to the main dataset directory.
@@ -25,6 +26,14 @@ class WaterScenesDataset(Dataset):
         self.root_dir = root_dir
         self.image_transform = image_transform
         self.target_transform = target_transform
+
+        if radar_mean and radar_std:
+            # Shape [4, 1, 1] for broadcasting against [4, H, W]
+            self.radar_mean = torch.tensor(radar_mean, dtype=torch.float32).view(4, 1, 1)
+            self.radar_std = torch.tensor(radar_std, dtype=torch.float32).view(4, 1, 1)
+        else:
+            self.radar_mean = None
+            self.radar_std = None
         
         # --- Define file paths ---
         self.image_dir = os.path.join(root_dir, 'image')
@@ -87,6 +96,11 @@ class WaterScenesDataset(Dataset):
             C, H, W = 4, 320, 320 
             radar_tensor = torch.zeros((C, H, W), dtype=torch.float32)
 
+        if self.radar_mean is not None:
+            # Formula: (x - mean) / std
+            # Add epsilon to std to avoid division by zero
+            radar_tensor = (radar_tensor - self.radar_mean) / (self.radar_std + 1e-6)
+
         # --- 3. Load Label (YOLO format) ---
         label_path = os.path.join(self.label_dir, f"{file_id}.txt")
         labels = []
@@ -98,6 +112,11 @@ class WaterScenesDataset(Dataset):
                         parts = line.strip().split()
                         if len(parts) == 5:
                             # [class_id, x_c, y_c, w, h]
+                            cls_id = float(parts[0])
+                            if cls_id < 0:
+                                print("Label -1 found")
+                                continue
+                                
                             labels.append([float(p) for p in parts])
             except Exception as e:
                 print(f"Error loading label file {label_path}: {e}")
