@@ -1,3 +1,4 @@
+import random
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
@@ -42,6 +43,21 @@ class WaterScenesDataset(Dataset):
 
         # Load the file IDs (e.g., '000001', '000002') from the split file
         self.file_ids = self._load_file_ids(split_file)
+
+        # --- 2. SUBSET LOGIC (Shuffle & Slice) ---
+        # Only apply this to the training set (check filename)
+        if 'train' in str(split_file):
+            # Use a fixed seed so you get the SAME random subset every time (Reproducibility)
+            random.seed(42) 
+            random.shuffle(self.file_ids)
+            
+            # Select percentage (e.g., 0.20 for 20%)
+            subset_ratio = 0.20 
+            subset_size = int(len(self.file_ids) * subset_ratio)
+            
+            # Slice the list
+            self.file_ids = self.file_ids[:subset_size]
+            print(f"--> Training on RANDOM subset ({int(subset_ratio*100)}%): {len(self.file_ids)} samples")
 
         # Add a check for the preprocessed folder ---
         if not os.path.exists(self.radar_revp_dir):
@@ -105,19 +121,33 @@ class WaterScenesDataset(Dataset):
         label_path = os.path.join(self.label_dir, f"{file_id}.txt")
         labels = []
         
+        # --- SCALE TO IMAGE SIZE ---
+        IMG_H, IMG_W = 320, 320 
+        
         if os.path.exists(label_path):
             try:
                 with open(label_path, 'r') as f:
                     for line in f:
                         parts = line.strip().split()
                         if len(parts) == 5:
-                            # [class_id, x_c, y_c, w, h]
                             cls_id = float(parts[0])
-                            if cls_id < 0:
-                                print("Label -1 found")
+                            
+                            # Filter Classes (0-6)
+                            if cls_id < 0 or cls_id >= 7: 
                                 continue
-                                
-                            labels.append([float(p) for p in parts])
+                            
+                            # Parse Normalized Coordinates (0.0 - 1.0)
+                            n_cx, n_cy, n_w, n_h = [float(p) for p in parts[1:5]]
+                            
+                            # --- CONVERT TO ABSOLUTE PIXELS ---
+                            # This fixes the Loss=5.0 issue
+                            abs_cx = n_cx * IMG_W
+                            abs_cy = n_cy * IMG_H
+                            abs_w  = n_w  * IMG_W
+                            abs_h  = n_h  * IMG_H
+                            
+                            labels.append([cls_id, abs_cx, abs_cy, abs_w, abs_h])
+                            
             except Exception as e:
                 print(f"Error loading label file {label_path}: {e}")
         

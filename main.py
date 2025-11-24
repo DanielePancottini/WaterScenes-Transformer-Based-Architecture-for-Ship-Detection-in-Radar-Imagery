@@ -19,19 +19,19 @@ DATASET_ROOT = os.path.abspath("./data/WaterScenes")
 TRAIN_FILE = os.path.join(DATASET_ROOT, "train.txt")
 VAL_FILE = os.path.join(DATASET_ROOT, "val.txt")
 TEST_FILE = os.path.join(DATASET_ROOT, "test.txt")
-MODEL_SAVE_PATH = os.path.abspath("./checkpoints/rcnet_radar_detection.pth")
+MODEL_SAVE_PATH = os.path.abspath("./checkpoints/rcnet_radar_detection_full_transformer.pth")
 
 # --- Config ---
 TARGET_SIZE = (320, 320) 
 NUM_CLASSES = 7 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-EPOCHS = 5
+EPOCHS = 10
 BATCH_SIZE = 16
 STRIDES = [8, 16, 32] 
 IN_CHANNELS = 4
 IN_CHANNELS_LIST = [12, 24, 44]
 HEAD_WIDTH = 32
-INITIAL_LR = 0.001
+INITIAL_LR = 0.03
 MOMENTUM = 0.937
 FP16 = False
 RADAR_MEAN = [0.1127, -0.0019, -0.0012, 0.0272]
@@ -176,7 +176,7 @@ if __name__ == "__main__":
     ).to(DEVICE)
 
     # --- Optimizer ---
-    optimizer = optim.SGD(model.parameters(), lr=INITIAL_LR, momentum=MOMENTUM)
+    optimizer = optim.SGD(model.parameters(), lr=INITIAL_LR, momentum=MOMENTUM, weight_decay=5e-4)
 
     # --- Learning rate scaler ---
     nbs = 64

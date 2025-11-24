@@ -42,9 +42,14 @@ class Trainer:
             with autocast(enabled=self.fp16, device_type=self.device.type):
                 outputs = self.model(radars)
                 loss = self.criterion(outputs, targets)
-                
+
             # Mixed precision backward
             self.scaler.scale(loss).backward()
+
+            # Gradient clipping
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
@@ -52,8 +57,8 @@ class Trainer:
             if self.ema is not None:
                 self.ema.update(self.model)
 
-            running_loss += loss
-        epoch_loss = (running_loss / len(self.train_loader)).item()
+            running_loss += loss.item()
+        epoch_loss = running_loss / len(self.train_loader)
         return epoch_loss
 
     def validate_epoch(self):
@@ -79,6 +84,7 @@ class Trainer:
             train_loss = self.train_epoch()
             val_loss = self.validate_epoch()
             print(f"Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+            self.epoch += 1
         
         # Save the final model
         if os.path.dirname(final_model_path) != '':
