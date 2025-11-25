@@ -5,7 +5,7 @@ import os
 from data.WaterScenesDataset import WaterScenesDataset, collate_fn
 
 # --- Config ---
-DATASET_ROOT = os.path.abspath("./data/WaterScenes")
+DATASET_ROOT = os.path.abspath("../data/WaterScenes")
 TRAIN_FILE = os.path.join(DATASET_ROOT, "train.txt")
 BATCH_SIZE = 16
 

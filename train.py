@@ -1,93 +1,220 @@
 import os
+from matplotlib import pyplot as plt
+import numpy as np
 import torch
-from torch.amp import GradScaler
-from torch.amp import autocast
-from detection.detection_loss import set_optimizer_lr
-from tqdm import tqdm
+from torch.utils.data import DataLoader
+from torchvision import transforms
+from backbone.radar.radar_encoder import RCNet, RCNetWithTransformer
+from data.WaterScenesDataset import WaterScenesDataset
+from data.WaterScenesDataset import collate_fn
+from detection.detection_head import NanoDetectionHead
+from model import RadarDetectionModel
+from trainer import Trainer
+import torch.optim as optim
+from detection.detection_loss import YOLOLoss, ModelEMA, get_lr_scheduler
+from PIL import Image
 
-class Trainer:
-    def __init__(self, model, train_loader, val_loader, criterion, optimizer, epochs, device,
-                 ema, lr_scheduler, fp16=True):
-        self.model = model.to(device)
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        self.criterion = criterion
-        self.optimizer = optimizer
-        self.epochs = epochs
-        self.device = device
-        self.ema = ema
-        self.lr_scheduler = lr_scheduler
-        self.fp16 = fp16
-        self.scaler = GradScaler(enabled=self.fp16) # for mixed precision
-        self.epoch = 0
-        self.steps_per_epoch = len(train_loader)
+# --- Set your paths ---
+DATASET_ROOT = os.path.abspath("./data/WaterScenes")
+TRAIN_FILE = os.path.join(DATASET_ROOT, "train.txt")
+VAL_FILE = os.path.join(DATASET_ROOT, "val.txt")
+TEST_FILE = os.path.join(DATASET_ROOT, "test.txt")
+MODEL_SAVE_PATH = os.path.abspath("./checkpoints/rcnet_radar_detection_half_transformer_transfer_learning_30e.pth")
 
-    def train_epoch(self):
-        self.model.train()
-        running_loss = 0.0
+# --- Config ---
+TARGET_SIZE = (320, 320) 
+NUM_CLASSES = 7 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EPOCHS = 30
+BATCH_SIZE = 32
+STRIDES = [8, 16, 32] 
+IN_CHANNELS = 4
+IN_CHANNELS_LIST = [12, 24, 44]
+HEAD_WIDTH = 32
+INITIAL_LR = 0.03
+MOMENTUM = 0.937
+FP16 = False
+RADAR_MEAN = [0.1127, -0.0019, -0.0012, 0.0272]
+RADAR_STD  = [3.1396,  0.2177,  0.0556,  0.6252]
 
-        # Progress bar for training epoch
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch+1}/{self.epochs} [Train]", leave=True)
+# --- Add CuDNN Benchmark ---
+torch.backends.cudnn.benchmark = True
 
-        for i, batch in enumerate(pbar):
-            # set new lr for current step
-            current_step = self.epoch * self.steps_per_epoch + i
-            set_optimizer_lr(self.optimizer, self.lr_scheduler, current_step)
+if __name__ == "__main__":
 
-            radars, targets = batch['radar'].to(self.device), batch['label'].to(self.device)
+    print(f"Using Device: {DEVICE}")
+    
+    # --- Image Transforms ---
+    image_transform = transforms.Compose([
+        transforms.Resize(TARGET_SIZE), 
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
 
-            self.optimizer.zero_grad()
+    # --- Create the Datasets ---
+    print("Initializing Datasets...")
 
-            # Mixed precision training
-            with autocast(enabled=self.fp16, device_type=self.device.type):
-                outputs = self.model(radars)
-                loss = self.criterion(outputs, targets)
+    train_dataset = WaterScenesDataset(
+        root_dir=DATASET_ROOT,
+        split_file=TRAIN_FILE,
+        image_transform=image_transform,
+        radar_mean=RADAR_MEAN,
+        radar_std=RADAR_STD
+    )
 
-            # Mixed precision backward
-            self.scaler.scale(loss).backward()
+    validation_dataset = WaterScenesDataset(
+        root_dir=DATASET_ROOT,
+        split_file=VAL_FILE,
+        image_transform=image_transform,
+        radar_mean=RADAR_MEAN,
+        radar_std=RADAR_STD
+    )
 
-            # Gradient clipping
-            self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+    # --- Create the DataLoaders ---
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=4,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=True
+    )
 
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+    val_loader = DataLoader(
+        validation_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=4,
+        collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=True
+    )
 
-            # Update EMA model
-            if self.ema is not None:
-                self.ema.update(self.model)
+    # ==========================================
+    #      VISUALIZE FIRST EXAMPLE ONLY
+    # ==========================================
+    print("\n--- Visualizing First Dataset Example ---")
+    
+    # Fetch a single batch from the loader
+    batch_data = next(iter(train_loader))
+    
+    radars_batch = batch_data['radar']
+    labels_batch = batch_data['label']
+    
+    file_ids = batch_data['file_ids']
+    current_id = file_ids[0]
+    
+    # Load the RGB Image Manually from Disk
+    img_path = os.path.join(DATASET_ROOT, 'image', f"{current_id}.jpg")
+    try:
+        real_image = Image.open(img_path).convert('RGB')
+        real_image = real_image.resize(TARGET_SIZE)
+        image_to_plot = np.array(real_image)
+    except Exception as e:
+        print(f"Error loading image {img_path}: {e}")
+        image_to_plot = np.zeros((320, 320, 3)) # Black image fallback
 
-            running_loss += loss.item()
-        epoch_loss = running_loss / len(self.train_loader)
-        return epoch_loss
+    # Get Radar Channels for the first item
+    radar_tensor = radars_batch[0] # [4, H, W]
+    
+    # Plot
+    titles = [f'RGB ({current_id})', 'Range', 'Elevation', 'Doppler', 'Power']
+    images_list = [
+        image_to_plot, 
+        radar_tensor[0].numpy(), 
+        radar_tensor[1].numpy(), 
+        radar_tensor[2].numpy(), 
+        radar_tensor[3].numpy()
+    ]
 
-    def validate_epoch(self):
-        # Use EMA model for validation if available
-        model_to_evaluate = self.ema.ema.eval() if self.ema is not None else self.model.eval()
+    fig, axes = plt.subplots(1, 5, figsize=(20, 5))
+    for i, (img, title) in enumerate(zip(images_list, titles)):
+        ax = axes[i]
+        if i == 0:
+            ax.imshow(img) # RGB
+        else:
+            im = ax.imshow(img, cmap='viridis') # Radar
+            plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        ax.set_title(title)
+        ax.axis('off')
+    
+    plt.tight_layout()
+    plt.show()
+    print("Visualization closed. Proceeding to Model Setup...")
+
+    # ==========================================
+    #           MODEL SETUP & TRAIN
+    # ==========================================
+
+    # Initialize RCNet with Transformer Backbone
+    rcnet_tf = RCNetWithTransformer(
+        in_channels=IN_CHANNELS, 
+        phi='S0',
+        num_transformer_layers=2,
+        num_heads=4,
+        max_input_hw=320
+    )
+
+    # --- Initialize Head ---
+    head = NanoDetectionHead(
+        num_classes=NUM_CLASSES,
+        in_channels_list=IN_CHANNELS_LIST,
+        head_width=HEAD_WIDTH
+    )
+
+    # --- Initialize Model ---
+    model = RadarDetectionModel(backbone=rcnet_tf, detection_head=head)
+    model.to(DEVICE)
+
+    # --- Load Weights ---
+    # LOAD WEIGHTS FROM PREVIOUS RUN
+    checkpoint = torch.load("./checkpoints/rcnet_radar_detection_half_transformer_20e.pth")
+    model.load_state_dict(checkpoint)
+    print("Loaded weights from previous training!")
         
-        running_loss = 0.0
-        with torch.no_grad():
-            for batch in self.val_loader:
-                radars, targets = batch['radar'].to(self.device), batch['label'].to(self.device)
+    # EMA and Loss
+    ema = ModelEMA(model)
+    criterion = YOLOLoss(
+        num_classes=NUM_CLASSES,
+        strides=STRIDES,
+        fp16=FP16 
+    ).to(DEVICE)
 
-                # Mixed precision inference
-                with autocast(enabled=self.fp16, device_type=self.device.type):
-                    outputs = model_to_evaluate(radars)
-                    loss = self.criterion(outputs, targets)
+    # --- Optimizer ---
+    optimizer = optim.SGD(model.parameters(), lr=INITIAL_LR, momentum=MOMENTUM, weight_decay=5e-4)
 
-                running_loss += loss.item()
-        epoch_loss = running_loss / len(self.val_loader)
-        return epoch_loss
+    # --- Learning rate scaler ---
+    nbs = 64
+    lr_limit_max = 5e-2 
+    lr_limit_min = 5e-4
+    Init_lr_fit = min(max(BATCH_SIZE / nbs * INITIAL_LR, lr_limit_min), lr_limit_max)
+    Min_lr_fit = Init_lr_fit * 0.01
 
-    def train(self, final_model_path):
-        for epoch in range(self.epochs):
-            train_loss = self.train_epoch()
-            val_loss = self.validate_epoch()
-            print(f"Epoch {epoch+1}/{self.epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
-            self.epoch += 1
-        
-        # Save the final model
-        if os.path.dirname(final_model_path) != '':
-            os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
-        torch.save(self.model.state_dict(), final_model_path)
+    # --- Learning Rate Scheduler ---
+    steps_per_epoch = len(train_loader)
+    total_steps = EPOCHS * steps_per_epoch
+    lr_scheduler = get_lr_scheduler(
+        lr_decay_type="cos",
+        lr=Init_lr_fit,
+        min_lr=Min_lr_fit,
+        total_iters=total_steps,
+    )
 
+    # --- Trainer ---
+    trainer = Trainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        epochs=EPOCHS,
+        device=DEVICE,
+        ema=ema,
+        lr_scheduler=lr_scheduler,
+        fp16=FP16
+    )
+    
+    print("Starting training...")
+    trainer.train(final_model_path=MODEL_SAVE_PATH)
+    print("Training complete.")
