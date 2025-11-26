@@ -6,11 +6,11 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.ops import box_iou
 import torchvision
 from PIL import Image
 
 # --- Imports from your project ---
+# Ensure these files exist in your python path
 from backbone.radar.radar_encoder import RCNetWithTransformer, RCNet 
 from detection.detection_head import NanoDetectionHead
 from model import RadarDetectionModel
@@ -26,8 +26,8 @@ TEST_FILE = os.path.join(DATASET_ROOT, "test.txt")
 # --- EXPERIMENT CONFIGURATION ---
 EXPERIMENTS = [
     {
-        "name": "Half Transformer Model",
-        "path": "./checkpoints/rcnet_radar_detection_half_transformer.pth", 
+        "name": "Half Transformer Model 20% Dataset 20 Epochs",
+        "path": "./checkpoints/rcnet_radar_detection_half_transformer_20e.pth", 
         "config": {
             "backbone_type": "RCNetWithTransformer",
             "phi": "S0",
@@ -35,8 +35,8 @@ EXPERIMENTS = [
         }
     },
     {
-        "name": "Half Transformer Model Transfer Learning", 
-        "path": "./checkpoints/rcnet_radar_detection_half_transformer_transfer_learning.pth", 
+        "name": "Half Transformer Model Transfer Learning 5 Epochs", 
+        "path": "./checkpoints/rcnet_radar_detection_half_transformer_transfer_learning_5e.pth", 
         "config": {
             "backbone_type": "RCNetWithTransformer",
             "phi": "S0",
@@ -44,8 +44,17 @@ EXPERIMENTS = [
         }
     },
     {
-        "name": "Full Transformer Model", 
-        "path": "./checkpoints/rcnet_radar_detection_full_transformer.pth",
+        "name": "Half Transformer Model Transfer Learning 30 Epochs", 
+        "path": "./checkpoints/rcnet_radar_detection_half_transformer_transfer_learning_30e.pth", 
+        "config": {
+            "backbone_type": "RCNetWithTransformer",
+            "phi": "S0",
+            "last_stages_only": True 
+        }
+    },
+    {
+        "name": "Full Transformer Model 5 Epochs", 
+        "path": "./checkpoints/rcnet_radar_detection_full_transformer_5e.pth",
         "config": {
             "backbone_type": "RCNetWithTransformer",
             "phi": "S0",
@@ -65,7 +74,7 @@ IOU_THRESH  = 0.25
 CLASS_NAMES = ["Pier", "Buoy", "Sailor", "Ship", "Boat", "Vessel", "Kayak"]
 
 # ==========================================
-#           HELPER FUNCTIONS
+#           MODEL & BUILDER
 # ==========================================
 
 def build_model_from_config(config):
@@ -73,32 +82,30 @@ def build_model_from_config(config):
     in_channels = 4
     phi = config.get('phi', 'S0')
     backbone_type = config.get('backbone_type', 'RCNet')
-    
-    # Get the flag (Default to True if not specified, assuming newer models)
     last_stages_only = config.get('last_stages_only', True)
     
     if backbone_type == 'RCNet':
         backbone = RCNet(in_channels=in_channels, phi=phi)
     elif backbone_type == 'RCNetWithTransformer':
-        print(f"   -> Building RCNetWithTransformer (last_stages_only={last_stages_only})")
+        # print(f"   -> Building RCNetWithTransformer (last_stages_only={last_stages_only})")
         backbone = RCNetWithTransformer(
             in_channels=in_channels, 
             phi=phi, 
             max_input_hw=320,
-            last_stages_only=last_stages_only # <--- Pass the flag here
+            last_stages_only=last_stages_only
         )
     else:
         raise ValueError(f"Unknown backbone type: {backbone_type}")
     
     # S0 Channels
     head_channels = [12, 24, 44] 
-
     head = NanoDetectionHead(num_classes=NUM_CLASSES, in_channels_list=head_channels, head_width=32)
     model = RadarDetectionModel(backbone, head)
     return model
 
-# ... (The rest of the functions: box_iou, non_max_suppression, decode_outputs, etc. remain EXACTLY the same) ...
-# Copy them from the previous script or ask me if you need them pasted again.
+# ==========================================
+#           DETECTION UTILS
+# ==========================================
 
 def decode_outputs(outputs, strides=[8, 16, 32]):
     decoded = []
@@ -135,6 +142,10 @@ def non_max_suppression(prediction, conf_thres=0.25, nms_thres=0.45):
         output[image_i] = detections[keep]
     return output
 
+# ==========================================
+#           METRIC CALCULATION
+# ==========================================
+
 def compute_ap(recall, precision):
     mrec = np.concatenate(([0.0], recall, [1.0]))
     mpre = np.concatenate(([1.0], precision, [0.0]))
@@ -155,7 +166,7 @@ def get_batch_statistics(outputs, targets, iou_threshold):
         pred_scores = output[:, 4]
         pred_labels = output[:, 5]
 
-        true_positives = torch.zeros(pred_boxes.shape[0]) # Created on CPU
+        true_positives = torch.zeros(pred_boxes.shape[0])
 
         # Get annotations
         annotations = targets[targets[:, 0] == sample_i][:, 1:]
@@ -173,15 +184,9 @@ def get_batch_statistics(outputs, targets, iou_threshold):
             t_boxes[:, 3] = target_boxes[:, 1] + target_boxes[:, 3] / 2
 
             for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
-                
-                if len(detected_boxes) == len(annotations):
-                    break
+                if len(detected_boxes) == len(annotations): break
+                if pred_label not in target_labels: continue
 
-                if pred_label not in target_labels:
-                    continue
-
-                # Use torchvision.ops.box_iou for stability
-                # Ensure dimensions match: [1, 4] vs [M, 4]
                 iou = torchvision.ops.box_iou(pred_box.unsqueeze(0), t_boxes).squeeze(0)
                 max_iou, box_index = iou.max(0)
                 
@@ -189,10 +194,13 @@ def get_batch_statistics(outputs, targets, iou_threshold):
                     true_positives[pred_i] = 1
                     detected_boxes.append(box_index)
         
-        # --- FIX: Move everything to CPU to match true_positives ---
-        batch_metrics.append([true_positives, pred_scores.cpu(), pred_labels.cpu()])
+        batch_metrics.append([true_positives.cpu(), pred_scores.cpu(), pred_labels.cpu()])
         
     return batch_metrics
+
+# ==========================================
+#           CORE EVALUATION LOOP
+# ==========================================
 
 def evaluate_experiment(experiment, test_loader):
     name = experiment['name']
@@ -203,14 +211,9 @@ def evaluate_experiment(experiment, test_loader):
     
     try:
         model = build_model_from_config(config).to(DEVICE)
-    except Exception as e:
-        print(f"Error building model: {e}")
-        return None, None
-
-    try:
         model.load_state_dict(torch.load(path, map_location=DEVICE))
     except Exception as e:
-        print(f"Error loading weights: {e}")
+        print(f"Skipping {name}: {e}")
         return None, None
     
     model.eval()
@@ -219,7 +222,7 @@ def evaluate_experiment(experiment, test_loader):
     sample_metrics = [] 
 
     with torch.no_grad():
-        for batch in tqdm(test_loader, desc=f"Eval {name}"):
+        for batch in tqdm(test_loader, desc=f"Inference"):
             radars = batch['radar'].to(DEVICE)
             targets = batch['label'].to(DEVICE)
             
@@ -229,6 +232,7 @@ def evaluate_experiment(experiment, test_loader):
             
             sample_metrics += get_batch_statistics(preds_nms, targets, IOU_THRESH)
             
+            # Ground truth for total count
             for i in range(len(preds_nms)):
                 annots = targets[targets[:, 0] == i]
                 labels += annots[:, 1].tolist()
@@ -256,23 +260,29 @@ def evaluate_experiment(experiment, test_loader):
         fp = torch.cumsum(fp, dim=0)
         rec = tp / (n_gt + 1e-16)
         prec = tp / (tp + fp + 1e-16)
-        ap = compute_ap(rec.cpu().numpy(), prec.cpu().numpy())
+        ap = compute_ap(rec.numpy(), prec.numpy())
         AP.append(ap)
         ap_class.append(c)
 
     mAP = np.mean(AP) if len(AP) > 0 else 0
-    print(f"    -> mAP@0.5: {mAP:.4f}")
+    print(f"    -> mAP@0.25: {mAP:.4f}")
     return mAP, AP
 
 def save_qualitative_results(experiment, dataset, output_dir="report_figures"):
+    """
+    Saves a few example images with bounding boxes
+    """
     name = experiment['name']
     path = experiment['path']
     config = experiment['config']
     
     model = build_model_from_config(config).to(DEVICE)
-    model.load_state_dict(torch.load(path, map_location=DEVICE))
+    try:
+        model.load_state_dict(torch.load(path, map_location=DEVICE))
+    except: return
     model.eval()
     
+    # Pick 3 random samples
     indices = np.random.choice(len(dataset), 3, replace=False)
     
     for idx in indices:
@@ -285,6 +295,7 @@ def save_qualitative_results(experiment, dataset, output_dir="report_figures"):
             decoded = decode_outputs(raw)
             results = non_max_suppression(decoded, conf_thres=0.3, nms_thres=0.45)[0] 
 
+        # Prepare Background Image
         img_path = os.path.join(DATASET_ROOT, 'image', f"{file_id}.jpg")
         try:
             pil_img = Image.open(img_path).convert("RGB").resize((320, 320))
@@ -292,26 +303,35 @@ def save_qualitative_results(experiment, dataset, output_dir="report_figures"):
         except:
             img_draw = np.zeros((320, 320, 3), dtype=np.uint8)
 
+        # Draw Boxes
         if results is not None:
             for box in results:
                 x1, y1, x2, y2, score, cls_id = box.cpu().numpy()
                 cv2.rectangle(img_draw, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                label = f"{CLASS_NAMES[int(cls_id)]} {score:.2f}"
-                cv2.putText(img_draw, label, (int(x1), int(y1)-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                label_txt = f"{CLASS_NAMES[int(cls_id)]}"
+                cv2.putText(img_draw, label_txt, (int(x1), int(y1)-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
+        # Plot Radar vs Prediction
         fig, ax = plt.subplots(1, 2, figsize=(10, 5))
         ax[0].imshow(sample['radar'][3].cpu(), cmap='magma') 
         ax[0].set_title("Radar Power")
         ax[0].axis('off')
+        
         ax[1].imshow(img_draw)
-        ax[1].set_title(f"{name}: {file_id}")
+        ax[1].set_title(f"{name}\nID: {file_id}")
         ax[1].axis('off')
+        
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/viz_{name}_{file_id}.png")
+        safe_name = name.replace(" ", "_").replace("%", "pct")
+        plt.savefig(f"{output_dir}/viz_{safe_name}_{file_id}.png")
         plt.close()
 
+# ==========================================
+#               MAIN EXECUTION
+# ==========================================
 if __name__ == "__main__":
     
+    # 1. Setup Data
     img_tf = transforms.Compose([
         transforms.Resize(TARGET_SIZE), 
         transforms.ToTensor(),
@@ -324,22 +344,53 @@ if __name__ == "__main__":
     results = {}
     os.makedirs("report_figures", exist_ok=True)
 
+    # 2. Run Experiments
     for exp in EXPERIMENTS:
-        path = exp['path']
-        if os.path.exists(path):
+        if os.path.exists(exp['path']):
             mAP, AP = evaluate_experiment(exp, test_loader)
             if mAP is not None:
                 results[exp['name']] = {'mAP': mAP, 'AP': AP}
                 save_qualitative_results(exp, test_dataset)
         else:
-            print(f"Skipping {exp['name']}: Path {path} not found.")
+            print(f"Skipping {exp['name']}: Path {exp['path']} not found.")
 
+    # 3. Visualization: Horizontal Bar Chart
     if results:
         names = list(results.keys())
         maps = [results[n]['mAP'] for n in names]
-        plt.figure(figsize=(10, 6))
-        plt.bar(names, maps, color='skyblue')
-        plt.ylabel('mAP @ 0.5')
-        plt.title('Performance Comparison')
-        plt.savefig('report_figures/comparison_bar.png')
-        print("Comparison chart saved.")
+        
+        # Calculate dynamic height: ~0.8 inches per bar + buffer
+        fig_height = len(names) * 0.8 + 2
+        fig, ax = plt.subplots(figsize=(10, fig_height))
+        
+        # Create positions
+        y_pos = np.arange(len(names))
+        
+        # Create Horizontal Bars
+        bars = ax.barh(y_pos, maps, color='steelblue', align='center', height=0.6)
+        
+        # Invert Y-axis so the first list item is at the top
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(names, fontsize=10) # Full labels are readable here
+        ax.invert_yaxis()  
+        
+        ax.set_xlabel('mAP @ 0.25')
+        ax.set_title('Experiment Performance Comparison')
+        
+        # Add value annotations to the right of the bars
+        for bar in bars:
+            width = bar.get_width()
+            ax.annotate(f'{width:.4f}',
+                        xy=(width, bar.get_y() + bar.get_height() / 2),
+                        xytext=(5, 0),  # 5 points padding to the right
+                        textcoords="offset points",
+                        ha='left', va='center',
+                        fontsize=10, fontweight='bold')
+
+        # Extend x-axis slightly to fit the labels
+        max_val = max(maps) if maps else 1.0
+        ax.set_xlim(0, max_val * 1.15) 
+
+        plt.tight_layout()
+        plt.savefig('report_figures/comparison_bar_horizontal.png', dpi=300)
+        print("\nSUCCESS: 'report_figures/comparison_bar_horizontal.png' generated.")
